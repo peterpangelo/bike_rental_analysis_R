@@ -1,0 +1,127 @@
+#Step 1: Preparing R Notebook
+
+#Preliminary package installation
+install.packages("tidyverse")
+library(tidyverse)
+
+install.packages("ggplot2")
+library(ggplot2)
+
+install.packages("lubridate")
+library(lubridate)
+
+#Standardizing language and other output formats to English
+Sys.getlocale()
+Sys.getlocale("LC_TIME")
+Sys.setLanguage(lang = "en")
+Sys.setlocale("LC_ALL","English")
+sessionInfo() #Just to check and make sure all output formats are standardized (Also quick package install check)
+
+#Importing and combining the .csv files
+list_of_files <- list.files(path = "C:/my_directory/Bike_data/",
+                            recursive = TRUE,
+                            pattern = "\\.csv$",
+                            full.names = TRUE)
+
+df <- readr::read_csv(list_of_files, id = "file_name") #Makes a column with file directory as value, and naming it "df" (dataframe) for brevity while working with it.
+
+# Step 2: Cleaning the data
+
+# Quick overview of the new table that has been created
+head(df) 
+colnames(df)
+
+# Starting the cleaning process by removing columns that won't be of interest for analysis
+df <- df %>%  
+  select(-c(file_name, start_lat, start_lng, end_lat, end_lng))
+
+# Performing a slightly deeper check of the data frame and its structure.
+colnames(df)  #List of column names
+nrow(df)  #How many rows are in data frame?
+dim(df)  #Dimensions of the data frame?
+head(df)  #See the first 6 rows of data frame.
+tail(df) #See last 6 rows of data frame.
+str(df)  #See list of columns and data types (numeric, character, etc)
+summary(df)  #Statistical summary of data. Mainly for numerics
+
+# Inspecting specific columns for cleaning.
+table(df$member_casual) #raw amount of each
+prop.table(table(df$member_casual)) #Distribution of each
+is.null("member_casual") #Checking for null values. (Returns FALSE. All rows contain a proper value)
+table(df$rideable_type)
+prop.table(table(df$rideable_type))
+
+
+# Add columns that list the date, month, day, and year of each ride
+df$date <- as.Date(df$started_at) #The default format is yyyy-mm-dd
+df$month <- format(as.Date(df$date), "%m")
+df$day <- format(as.Date(df$date), "%d")
+df$year <- format(as.Date(df$date), "%Y")
+df$day_of_week <- format(as.Date(df$date), "%A")
+
+# Add a "ride_length" calculation to df (in seconds)
+df$ride_length <- difftime(df$ended_at,df$started_at)
+
+# Convert "ride_length" from Factor to numeric so we can run calculations on the data
+is.factor(df$ride_length) #Check that it's a Factor value
+df$ride_length <- as.numeric(as.character(df$ride_length)) #Convert to numeric
+is.numeric(df$ride_length) #Check that it's now numeric. (Returns TRUE)
+
+str(df) # Making sure all is in order
+
+# Creating a new data frame since we are eliminating data
+df_v2 <- df[!(df$ride_length<=0),] #Takes out negative number and "zero" ride lengths, since those represent bikes that weren't in service
+
+#A deeper look at ride_length duration shows that there are thousands of entries of suspiciously short rides
+summary(df_v2$ride_length) #Also, the Maximum duration shows approximately 28 days of ride length, will come back to this later.
+nrow(df_v2[df_v2$ride_length < 60, ]) # 125,564 values of under 60 second ride length
+nrow(df_v2[df_v2$ride_length < 120, ]) # 235,729 values of under 120 second ride length
+235729 / 6583704 * 100 # approximately 3.58% of rides were under 2 minutes.
+
+# We're going to assume that rides under 2 minutes were unintentional, and eliminate them to focus on presumed authentic rides. 
+# Will address this later, since it can be a problematic decision.
+# New data frame showing only rides over 2 minutes:
+df_v3 <- df_v2[!(df_v2$ride_length<120),]
+
+# Step 3: Descriptive analysis
+
+# See the average ride time by each day for members vs casual users
+aggregate(df_v3$ride_length ~ df_v3$member_casual + df_v3$day_of_week, FUN = mean)
+
+# Putting the days of the week in order.
+df_v3$day_of_week <- ordered(df_v3$day_of_week, levels=c("Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"))
+
+# Average ride time by each day for members vs casual users
+aggregate(df_v3$ride_length ~ df_v3$member_casual + df_v3$day_of_week, FUN = mean)
+
+# Analyze ridership data by type and weekday
+df_v3 %>% 
+  mutate(weekday = wday(started_at, label = TRUE)) %>%  #creates weekday field using wday()
+  group_by(member_casual, weekday) %>%  #groups by usertype and weekday
+  summarise(number_of_rides = n()                            #calculates the number of rides and average duration 
+            ,average_duration = mean(ride_length)) %>%         # calculates the average duration
+  arrange(member_casual, weekday)                                # sorts
+
+# Let's visualize the number of rides by rider type
+df_v3 %>% 
+  mutate(weekday = wday(started_at, label = TRUE)) %>% 
+  group_by(member_casual, weekday) %>% 
+  summarise(number_of_rides = n()
+            ,average_duration = mean(ride_length)) %>% 
+  arrange(member_casual, weekday)  %>% 
+  ggplot(aes(x = weekday, y = number_of_rides, fill = member_casual)) +
+  geom_col(position = "dodge")
+
+# Let's create a visualization for average duration
+df_v3 %>% 
+  mutate(weekday = wday(started_at, label = TRUE)) %>% 
+  group_by(member_casual, weekday) %>% 
+  summarise(number_of_rides = n()
+            ,average_duration = mean(ride_length)) %>% 
+  arrange(member_casual, weekday)  %>% 
+  ggplot(aes(x = weekday, y = average_duration, fill = member_casual)) +
+  geom_col(position = "dodge")
+
+# Exporting data for further analysis (as .csv)
+counts <- aggregate(df_v3$ride_length ~ df_v3$member_casual + df_v3$day_of_week, FUN = mean)
+write.csv(counts, file = "C:/my_directory/avg_ride_length.csv")
